@@ -11,7 +11,7 @@ from .portfolio_math import assign_weights
 def run_risk_check_logic(target_to_check, returns_df, all_coins, all_rules):
     """
     Performs the 6-rule risk check on a user-selected portfolio or single coin.
-    This version restores the missing Sortino Ratio calculation.
+    This version is corrected to prevent the KeyError during email alerts.
     """
     RISK_THRESHOLDS = {'Volatility': 5.0, 'Sharpe Ratio': 1.0, 'Max Drawdown': -20.0, 'Sortino Ratio': 1.0, 'Beta': 1.2, 'Max Asset Weight': 0.40}
     market_returns = returns_df['BTCUSDT'].dropna()
@@ -29,12 +29,10 @@ def run_risk_check_logic(target_to_check, returns_df, all_coins, all_rules):
 
     common_index = asset_returns.index.intersection(market_returns.index)
     
-    # --- THIS IS THE RESTORED AND CORRECTED METRICS CALCULATION ---
     metrics['Volatility'] = asset_returns.std()
     metrics['Sharpe Ratio'] = (asset_returns.mean() / asset_returns.std()) * np.sqrt(365) if asset_returns.std() != 0 else 0
     metrics['Max Drawdown'] = (((1 + asset_returns/100).cumprod()).cummax() - (1 + asset_returns/100).cumprod()).max() * -100
     
-    # Calculate Sortino Ratio
     negative_returns = asset_returns[asset_returns < 0]
     downside_deviation = negative_returns.std()
     if np.isnan(downside_deviation) or downside_deviation == 0:
@@ -43,8 +41,7 @@ def run_risk_check_logic(target_to_check, returns_df, all_coins, all_rules):
         metrics['Sortino Ratio'] = (asset_returns.mean() / downside_deviation) * np.sqrt(365)
         
     metrics['Beta'] = np.cov(asset_returns[common_index], market_returns[common_index])[0,1] / np.var(market_returns[common_index])
-    # -----------------------------------------------------------------
-
+    
     results = []
     for rule, value in metrics.items():
         op = '<=' if rule in ['Volatility', 'Beta', 'Max Asset Weight'] else '>='
@@ -54,13 +51,25 @@ def run_risk_check_logic(target_to_check, returns_df, all_coins, all_rules):
         else:
             passed = eval(f"value {op} RISK_THRESHOLDS[rule]")
             status = '✅ PASS' if passed else '❌ FAIL'
-        results.append({'Rule': rule, 'Value': round(value, 4), 'Threshold': f"{op} {RISK_THRESHOLDS[rule]}", 'Status': status})
+            
+        # --- THIS IS THE CRITICAL FIX ---
+        # The portfolio_name is now correctly added to every result row.
+        results.append({
+            'portfolio_name': target_to_check, # This was missing
+            'Rule': rule, 
+            'Value': round(value, 4), 
+            'Threshold': f"{op} {RISK_THRESHOLDS[rule]}", 
+            'Status': status
+        })
+        # ----------------------------------
         
     return pd.DataFrame(results)
 
 def send_email_alert(failed_rules, sender_email, sender_password, receiver_email):
-    """Formats and sends an email alert to the specified receiver."""
-    subject = f"ALERT: Risk Violation Detected for {failed_rules.iloc[0]['portfolio_name']}"
+    """Formats and sends an email alert with the details of failed rules."""
+    # This function now correctly uses the 'portfolio_name' column.
+    portfolio_name = failed_rules.iloc[0]['portfolio_name']
+    subject = f"ALERT: Risk Violation Detected for '{portfolio_name}'"
     body = f"Hello,\n\nThe following risk rules have failed for your monitored asset/portfolio:\n\n"
     for index, failure in failed_rules.iterrows():
         body += (
@@ -69,14 +78,6 @@ def send_email_alert(failed_rules, sender_email, sender_password, receiver_email
             f"    Actual Value: {failure['Value']}\n\n"
         )
     body += "Please review your portfolio for necessary adjustments.\n"
-
-    msg = MIMEMultipart()
-    msg['From'] = sender_email
-    msg['To'] = receiver_email
-    msg['Subject'] = subject
-    msg.attach(MIMEText(body, 'plain'))
-
+    msg = MIMEMultipart(); msg['From'] = sender_email; msg['To'] = receiver_email; msg['Subject'] = subject; msg.attach(MIMEText(body, 'plain'))
     with smtplib.SMTP('smtp.gmail.com', 587) as server:
-        server.starttls()
-        server.login(sender_email, sender_password)
-        server.send_message(msg)
+        server.starttls(); server.login(sender_email, sender_password); server.send_message(msg)
