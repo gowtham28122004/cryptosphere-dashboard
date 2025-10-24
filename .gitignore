@@ -1,0 +1,18 @@
+# Python temporary files
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Local secrets - DO NOT UPLOAD TO GITHUB
+.streamlit/secrets.toml
+
+# User database - DO NOT UPLOAD TO GITHUB
+data/users.db
+
+# OS files
+.DS_Store
+
+# IDE files
+.idea/
+.vscode/
